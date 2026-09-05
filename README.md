@@ -5,24 +5,25 @@
 ## 功能特点
 
 - 通过调用 Windows 原生网络接口（WinINet），向多个轻量级测速节点发起请求
-- 从所有成功节点中取**最小延迟**，有效规避单点波动或故障导致的误判
+- 所有成功节点取**中位数**，有效规避直连站点或单点波动导致的误判
+- 延迟数值**按颜色显示**：<span style="color:#00CC00">绿</span> / <span style="color:#66CC00">浅绿</span> / <span style="color:#DDCC00">黄</span> / <span style="color:#DD6600">橙</span> / <span style="color:#DD3333">红</span>，一眼判断网络质量
 - 任务栏实时显示当前科学上网代理节点的真实物理延迟
 - 自动跟随系统代理设置（`INTERNET_OPEN_TYPE_PRECONFIG`），兼容 Clash、v2ray 等常见代理软件
 
-## 测速站点
+## 颜色阈值
 
-插件内置 6 个全球知名 CDN/厂商的轻量级测速端点，全部使用 `204 No Content` 或极小响应体，确保测速请求本身不会引入额外延迟：
+延迟数值根据以下阈值自动着色：
 
-| 站点 | 提供商 | 端点 |
-|------|--------|------|
-| Cloudflare | Cloudflare | `/generate_204` |
-| Gstatic | Google | `/generate_204` |
-| Connectivitycheck Gstatic | Google | `/generate_204` |
-| Firefox Portal | Mozilla | `/success.txt` |
-| Captive Apple | Apple | `/generate_204` |
-| HiCloud | 华为 | `/generate_204` |
+| 颜色 | 延迟范围 | 说明 |
+|------|----------|------|
+| 绿色 | < 50ms | 优秀 |
+| 浅绿 | 50 ~ 99ms | 良好 |
+| 黄色 | 100 ~ 199ms | 一般 |
+| 橙色 | 200 ~ 499ms | 较慢 |
+| 红色 | ≥ 500ms | 很慢 |
+| 灰色 | 超时/错误 | 不可用 |
 
-显示格式：`50 ms (4/6)` — 表示最小延迟 50ms，6 个站点中成功测通 4 个。
+显示格式：`50 ms (4/6)` — 表示中位数延迟 50ms，6 个站点中成功测通 4 个。
 
 ## 安装与使用
 
@@ -85,6 +86,7 @@ http://cp.cloudflare.com/generate_204
 
 ## 版本历史
 
+- **v1.0.3** — 延迟数值按颜色显示（绿/黄/橙/红），自定义绘制，一眼判断网络质量
 - **v1.0.2** — 修复延迟过低问题：改用中位数算法，新增配置文件自定义测速 URL
 - **v1.0.1** — 多站点测速：增加至 6 个测速端点，取最小延迟
 - **v1.0.0** — 初始版本：单点 Cloudflare 测速

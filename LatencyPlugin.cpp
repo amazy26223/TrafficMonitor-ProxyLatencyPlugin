@@ -48,13 +48,18 @@ private:
     std::atomic<bool> m_is_updating{ false };
     std::vector<std::wstring> m_urls;
 
+    // 颜色状态
+    unsigned int m_label_color = 0xCCCCCC;   // 标签颜色（从主程序获取）
+    unsigned int m_latency_color = 0x00CC00;  // 延迟数值颜色（自动计算）
+    long long m_last_latency = -1;            // 上次测到的延迟，-1 表示未测到
+
     // 从配置文件加载测速 URL
     void LoadUrls() {
         m_urls.clear();
 
         // 获取 DLL 所在目录
         wchar_t dllPath[MAX_PATH];
-        GetModuleFileName(NULL, dllPath, MAX_PATH);
+        GetModuleFileNameW(NULL, dllPath, MAX_PATH);
         std::wstring configPath = dllPath;
         auto pos = configPath.rfind(L'\\');
         if (pos != std::wstring::npos) {
@@ -91,13 +96,23 @@ private:
     // 测量到单个站点的延迟 (毫秒)，失败返回 -1
     long long MeasureLatency(HINTERNET hInternet, const wchar_t* url) {
         auto start_time = std::chrono::high_resolution_clock::now();
-        HINTERNET hUrl = InternetOpenUrl(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD, 0);
+        HINTERNET hUrl = InternetOpenUrlW(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD, 0);
         if (hUrl) {
             auto end_time = std::chrono::high_resolution_clock::now();
             InternetCloseHandle(hUrl);
             return std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
         }
         return -1;
+    }
+
+    // 根据延迟值返回颜色 (COLORREF: 0x00BBGGRR)
+    unsigned int GetLatencyColor(long long latency) const {
+        if (latency < 0) return 0x888888;    // 错误/超时 → 灰色
+        if (latency < 50) return 0x00CC00;   // 优秀 → 绿色
+        if (latency < 100) return 0x66CC00;  // 良好 → 浅绿
+        if (latency < 200) return 0xDDCC00;  // 一般 → 黄色
+        if (latency < 500) return 0xDD6600;  // 较慢 → 橙色
+        return 0xDD3333;                      // 很慢 → 红色
     }
 
 public:
@@ -109,14 +124,44 @@ public:
     virtual const wchar_t* GetItemId() const override { return L"proxy_latency_item_01"; }
     virtual const wchar_t* GetItemLableText() const override { return L"延迟: "; }
     virtual const wchar_t* GetItemValueText() const override { return m_item_value.c_str(); }
-    virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms"; }
+    virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms (6/6)"; }
+
+    // ==========================================
+    // 自定义绘制 — 实现颜色数字
+    // ==========================================
+    virtual bool IsCustomDraw() const override { return true; }
+
+    // 固定宽度 (96 DPI 下)，主程序会根据 DPI 自动缩放
+    virtual int GetItemWidth() const override { return 150; }
+
+    // 自定义绘制
+    virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
+        // 字体大小自适应高度
+        int font_size = (std::max)(10, h - 2);
+
+        // 绘制标签 — 使用默认标签颜色
+        const wchar_t* label = GetItemLableText();
+        int label_w = 0, label_h = 0;
+        pDrawer->GetTextExtent(label, NULL, font_size, false, false, &label_w, &label_h);
+        pDrawer->DrawText(x, y, label_w, h, label, NULL, font_size, false, false, m_label_color, 0);
+
+        // 绘制数值 — 使用延迟颜色
+        int value_x = x + label_w;
+        int value_w = w - label_w;
+        pDrawer->DrawText(value_x, y, value_w, h, m_item_value.c_str(), NULL, font_size, false, false, m_latency_color, 0);
+
+        return true;
+    }
+
+    // 接收主程序传过来的标签颜色
+    void SetLabelColor(unsigned int color) { m_label_color = color; }
 
     // 多站点测速逻辑 — 取中位数，避免直连站点拉低结果
     void UpdateLatencyAsync() {
         if (m_is_updating.exchange(true)) return;
 
         std::thread([this]() {
-            HINTERNET hInternet = InternetOpen(L"TM_Plugin", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+            HINTERNET hInternet = InternetOpenW(L"TM_Plugin", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
             if (hInternet) {
                 std::vector<long long> latencies;
                 int total = static_cast<int>(m_urls.size());
@@ -132,14 +177,20 @@ public:
                     // 取中位数 (median) 而非最小值，避免直连站点的干扰
                     std::sort(latencies.begin(), latencies.end());
                     long long median = latencies[latencies.size() / 2];
+                    m_last_latency = median;
+                    m_latency_color = GetLatencyColor(median);
                     m_item_value = std::to_wstring(median) + L" ms ("
                                  + std::to_wstring(static_cast<int>(latencies.size())) + L"/"
                                  + std::to_wstring(total) + L")";
                 } else {
+                    m_last_latency = -1;
+                    m_latency_color = GetLatencyColor(-1);
                     m_item_value = L"超时";
                 }
                 InternetCloseHandle(hInternet);
             } else {
+                m_last_latency = -1;
+                m_latency_color = GetLatencyColor(-1);
                 m_item_value = L"网络错误";
             }
             m_is_updating = false;
@@ -166,12 +217,19 @@ public:
         switch (index)
         {
         case TMI_NAME: return L"代理节点延迟监控";
-        case TMI_DESCRIPTION: return L"多站点测速 (中位数)，支持自定义测速 URL";
+        case TMI_DESCRIPTION: return L"多站点测速 (中位数)，支持自定义测速 URL，颜色显示";
         case TMI_AUTHOR: return L"YourName";
         case TMI_COPYRIGHT: return L"Copyright (C) 2026";
-        case TMI_VERSION: return L"1.0.2";
+        case TMI_VERSION: return L"1.0.3";
         case TMI_URL: return L"";
         default: return L"";
+        }
+    }
+    // 接收主程序传递的颜色信息
+    virtual void OnExtenedInfo(ExtendedInfoIndex index, const wchar_t* data) override {
+        if (index == EI_LABEL_TEXT_COLOR && data) {
+            unsigned int color = std::wcstoul(data, nullptr, 16);
+            m_latency_item.SetLabelColor(color);
         }
     }
 };
