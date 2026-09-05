@@ -169,7 +169,7 @@ public:
         case TMI_DESCRIPTION: return L"多站点测速 (中位数)，支持自定义测速 URL";
         case TMI_AUTHOR: return L"YourName";
         case TMI_COPYRIGHT: return L"Copyright (C) 2026";
-        case TMI_VERSION: return L"0.2.0";
+        case TMI_VERSION: return L"1.0.2";
         case TMI_URL: return L"";
         default: return L"";
         }
