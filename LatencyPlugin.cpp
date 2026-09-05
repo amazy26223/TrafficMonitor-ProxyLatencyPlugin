@@ -19,6 +19,7 @@
 #include <atomic>
 #include <algorithm>
 #include <limits>
+#include <fstream>
 // ==========================================
 // 引入 Windows 自带的网络库和时间库
 #include <wininet.h>
@@ -40,6 +41,26 @@ static const wchar_t* DEFAULT_URLS[] = {
 static const int DEFAULT_URL_COUNT = sizeof(DEFAULT_URLS) / sizeof(DEFAULT_URLS[0]);
 
 // ==========================================
+// 设置文件名
+// ==========================================
+static const wchar_t* SETTINGS_FILE = L"proxy_latency_settings.ini";
+
+// 获取 DLL 目录
+static std::wstring GetDllDir() {
+    wchar_t dllPath[MAX_PATH];
+    GetModuleFileNameW(NULL, dllPath, MAX_PATH);
+    std::wstring path = dllPath;
+    auto pos = path.rfind(L'\\');
+    if (pos != std::wstring::npos)
+        path = path.substr(0, pos + 1);
+    return path;
+}
+
+// 默认设置
+static const int DEFAULT_FONT_SIZE = 18;
+static const int DEFAULT_INTERVAL_MS = 3000;
+
+// ==========================================
 // 1. 数据显示项类 (负责在任务栏上显示数据)
 // ==========================================
 class CLatencyItem : public IPluginItem
@@ -55,45 +76,58 @@ private:
     unsigned int m_latency_color = 0x00CC00;  // 延迟数值颜色（自动计算）
     long long m_last_latency = -1;            // 上次测到的延迟，-1 表示未测到
     std::chrono::steady_clock::time_point m_last_measure_time; // 上次测速时间
-    const int m_measure_interval_ms = 3000;   // 测速间隔（毫秒）
+
+    // 可配置设置
+    int m_font_size = DEFAULT_FONT_SIZE;
+    int m_measure_interval_ms = DEFAULT_INTERVAL_MS;
 
     // 从配置文件加载测速 URL
     void LoadUrls() {
         m_urls.clear();
+        std::wstring configPath = GetDllDir() + L"proxy_latency_urls.txt";
 
-        // 获取 DLL 所在目录
-        wchar_t dllPath[MAX_PATH];
-        GetModuleFileNameW(NULL, dllPath, MAX_PATH);
-        std::wstring configPath = dllPath;
-        auto pos = configPath.rfind(L'\\');
-        if (pos != std::wstring::npos) {
-            configPath = configPath.substr(0, pos + 1);
-        }
-        configPath += L"proxy_latency_urls.txt";
-
-        // 尝试读取配置文件
         FILE* file = NULL;
         if (_wfopen_s(&file, configPath.c_str(), L"r,ccs=UTF-8") == 0 && file) {
             wchar_t line[1024];
             while (fgetws(line, 1024, file)) {
-                // 去除末尾换行符
                 size_t len = wcslen(line);
-                while (len > 0 && (line[len - 1] == L'\n' || line[len - 1] == L'\r')) {
+                while (len > 0 && (line[len - 1] == L'\n' || line[len - 1] == L'\r'))
                     line[--len] = L'\0';
-                }
-                // 跳过空行和注释行
-                if (len > 0 && line[0] != L'#') {
+                if (len > 0 && line[0] != L'#')
                     m_urls.push_back(line);
-                }
             }
             fclose(file);
         }
 
-        // 如果配置文件不存在或为空，使用默认 URL
         if (m_urls.empty()) {
-            for (int i = 0; i < DEFAULT_URL_COUNT; i++) {
+            for (int i = 0; i < DEFAULT_URL_COUNT; i++)
                 m_urls.push_back(DEFAULT_URLS[i]);
-            }
+        }
+    }
+
+    // 加载设置
+    void LoadSettings() {
+        std::wstring path = GetDllDir() + SETTINGS_FILE;
+        FILE* file = NULL;
+        if (_wfopen_s(&file, path.c_str(), L"r") == 0 && file) {
+            int val;
+            if (fgetws(m_item_value.data(), 0, file) == NULL) { /* ignore */ }
+            rewind(file);
+            if (fwscanf_s(file, L"font_size=%d\n", &val) == 1)
+                m_font_size = (std::max)(10, (std::min)(val, 48));
+            if (fwscanf_s(file, L"interval_ms=%d\n", &val) == 1)
+                m_measure_interval_ms = (std::max)(1000, (std::min)(val, 30000));
+            fclose(file);
+        }
+    }
+
+    void SaveSettings() {
+        std::wstring path = GetDllDir() + SETTINGS_FILE;
+        FILE* file = NULL;
+        if (_wfopen_s(&file, path.c_str(), L"w") == 0 && file) {
+            fwprintf_s(file, L"font_size=%d\n", m_font_size);
+            fwprintf_s(file, L"interval_ms=%d\n", m_measure_interval_ms);
+            fclose(file);
         }
     }
 
@@ -121,7 +155,14 @@ private:
 public:
     CLatencyItem() {
         LoadUrls();
+        LoadSettings();
     }
+
+    // 设置访问接口
+    int GetFontSize() const { return m_font_size; }
+    int GetIntervalMs() const { return m_measure_interval_ms; }
+    void SetFontSize(int s) { m_font_size = (std::max)(10, (std::min)(s, 48)); SaveSettings(); }
+    void SetIntervalMs(int ms) { m_measure_interval_ms = (std::max)(1000, (std::min)(ms, 30000)); SaveSettings(); }
 
     virtual const wchar_t* GetItemName() const override { return m_item_name.c_str(); }
     virtual const wchar_t* GetItemId() const override { return L"proxy_latency_item_01"; }
@@ -134,10 +175,8 @@ public:
     // ==========================================
     virtual bool IsCustomDraw() const override { return true; }
 
-    // 固定宽度 (96 DPI 下)，主程序会根据 DPI 自动缩放
     virtual int GetItemWidth() const override { return 65; }
 
-    // 实际宽度
     virtual int GetItemWidthEx(void* hDC) const override {
         return 65;
     }
@@ -145,13 +184,11 @@ public:
     // 自定义绘制 — 旧 API（使用 HDC）
     virtual void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override {
         HDC dc = (HDC)hDC;
-        int font_size = (std::max)(14, h - 1);
+        int font_size = (std::max)(m_font_size, h - 1);
 
-        // 正常字体（标签）
         HFONT hFont = CreateFontW(font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-        // 粗体字体（数值）
         HFONT hBoldFont = CreateFontW(font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
@@ -162,13 +199,11 @@ public:
         SelectObject(dc, hFont);
         GetTextExtentPoint32W(dc, GetItemLableText(), label_len, &label_size);
 
-        // 绘制标签（正常）
         SetTextColor(dc, m_label_color);
         SelectObject(dc, hFont);
         RECT label_rc = { x, y, x + w, y + h };
         DrawTextW(dc, GetItemLableText(), -1, &label_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // 绘制数值（粗体 + 延迟颜色）
         SetTextColor(dc, m_latency_color);
         SelectObject(dc, hBoldFont);
         RECT value_rc = { x + label_size.cx, y, x + w, y + h };
@@ -181,7 +216,7 @@ public:
 
     // 自定义绘制 — 新 API（使用 IPluginDrawer）
     virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
-        int font_size = (std::max)(14, h - 1);
+        int font_size = (std::max)(m_font_size, h - 1);
         const wchar_t* font_name = L"Segoe UI";
 
         const wchar_t* label = GetItemLableText();
@@ -199,13 +234,11 @@ public:
     // 接收主程序传过来的标签颜色
     void SetLabelColor(unsigned int color) { m_label_color = color; }
 
-    // 多站点测速逻辑 — 取中位数，避免直连站点拉低结果
+    // 多站点测速逻辑
     void UpdateLatencyAsync() {
-        // 5 秒间隔限制
         auto now = std::chrono::steady_clock::now();
-        if (now - m_last_measure_time < std::chrono::milliseconds(m_measure_interval_ms)) {
+        if (now - m_last_measure_time < std::chrono::milliseconds(m_measure_interval_ms))
             return;
-        }
         m_last_measure_time = now;
 
         if (m_is_updating.exchange(true)) return;
@@ -218,13 +251,11 @@ public:
 
                 for (int i = 0; i < total; i++) {
                     long long delay = MeasureLatency(hInternet, m_urls[i].c_str());
-                    if (delay >= 0) {
+                    if (delay >= 0)
                         latencies.push_back(delay);
-                    }
                 }
 
                 if (!latencies.empty()) {
-                    // 取中位数 (median) 而非最小值，避免直连站点的干扰
                     std::sort(latencies.begin(), latencies.end());
                     long long median = latencies[latencies.size() / 2];
                     m_last_latency = median;
@@ -247,7 +278,148 @@ public:
 };
 
 // ==========================================
-// 2. 主插件类 (继承真实的 ITMPlugin 基类)
+// 2. 设置对话框
+// ==========================================
+// 控件 ID
+#define IDC_FONT_SIZE 1001
+#define IDC_INTERVAL  1002
+
+static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static CLatencyItem* pItem = nullptr;
+
+    switch (msg) {
+    case WM_INITDIALOG: {
+        pItem = reinterpret_cast<CLatencyItem*>(lParam);
+        // 设置字体大小
+        wchar_t buf[16];
+        wsprintfW(buf, L"%d", pItem->GetFontSize());
+        SetDlgItemTextW(hDlg, IDC_FONT_SIZE, buf);
+        wsprintfW(buf, L"%d", pItem->GetIntervalMs() / 1000);
+        SetDlgItemTextW(hDlg, IDC_INTERVAL, buf);
+        return TRUE;
+    }
+    case WM_COMMAND: {
+        if (LOWORD(wParam) == IDOK) {
+            wchar_t buf[16];
+
+            GetDlgItemTextW(hDlg, IDC_FONT_SIZE, buf, 16);
+            int fs = _wtoi(buf);
+            if (fs >= 10 && fs <= 48) pItem->SetFontSize(fs);
+
+            GetDlgItemTextW(hDlg, IDC_INTERVAL, buf, 16);
+            int sec = _wtoi(buf);
+            if (sec >= 1 && sec <= 30) pItem->SetIntervalMs(sec * 1000);
+
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        if (LOWORD(wParam) == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+}
+
+// 创建设置对话框模板（内存中构建）
+static HGLOBAL CreateSettingsTemplate() {
+    // 计算所需缓冲区大小
+    // DLGTEMPLATE: 6 WORDs = 12 bytes
+    // 2 WORDs (menu, class) = 4 bytes
+    // Title: L"延迟监控设置" = 14 bytes (7 chars)
+    // 6 controls * (DLGITEMTEMPLATE + text + padding)
+    // 大致估算: 1024 bytes 足够
+    const int BUF_SIZE = 2048;
+    HGLOBAL hMem = GlobalAlloc(GPTR, BUF_SIZE);
+    if (!hMem) return NULL;
+
+    BYTE* buf = (BYTE*)GlobalLock(hMem);
+    ZeroMemory(buf, BUF_SIZE);
+    int offset = 0;
+
+    // --- DLGTEMPLATE header ---
+    DLGTEMPLATE* dlg = (DLGTEMPLATE*)(buf + offset);
+    dlg->style = DS_CENTER | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    dlg->dwExtendedStyle = 0;
+    dlg->cdit = 6;  // 6 controls
+    dlg->x = 0;
+    dlg->y = 0;
+    dlg->cx = 240;
+    dlg->cy = 140;
+    offset += sizeof(DLGTEMPLATE);
+
+    // --- No menu ---
+    *(WORD*)(buf + offset) = 0; offset += 2;
+    // --- No class ---
+    *(WORD*)(buf + offset) = 0; offset += 2;
+    // --- Title ---
+    wcscpy_s((wchar_t*)(buf + offset), 16, L"延迟监控设置");
+    offset += (int)wcslen(L"延迟监控设置") * 2 + 2;
+
+    // 对齐到 DWORD
+    offset = (offset + 3) & ~3;
+
+    // 定义控件
+    struct CtrlDef {
+        DWORD style;
+        DWORD exStyle;
+        short x, y, cx, cy;
+        WORD id;
+        WORD classAtom;  // 0x0080=button, 0x0081=edit, 0x0082=static
+        const wchar_t* text;
+    };
+
+    // 使用 0xFFFF + atom 格式来标识控件类
+    CtrlDef ctrls[] = {
+        // 静态文本 "字体大小:"
+        { WS_CHILD | WS_VISIBLE | SS_RIGHT, 0, 10, 12, 70, 20, 0xFFFF, 0x0082, L"字体大小:" },
+        // 编辑框 (字体大小值)
+        { WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER, 0, 90, 12, 50, 20, IDC_FONT_SIZE, 0x0081, L"" },
+        // 静态文本 "测速间隔(秒):"
+        { WS_CHILD | WS_VISIBLE | SS_RIGHT, 0, 10, 42, 70, 20, 0xFFFF, 0x0082, L"间隔(秒):" },
+        // 编辑框 (间隔值)
+        { WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER, 0, 90, 42, 50, 20, IDC_INTERVAL, 0x0081, L"" },
+        // 确定按钮
+        { WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 55, 80, 55, 25, IDOK, 0x0080, L"确定" },
+        // 取消按钮
+        { WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 130, 80, 55, 25, IDCANCEL, 0x0080, L"取消" },
+    };
+
+    for (int i = 0; i < 6; i++) {
+        // 对齐到 DWORD
+        offset = (offset + 3) & ~3;
+
+        DLGITEMTEMPLATE* item = (DLGITEMTEMPLATE*)(buf + offset);
+        item->style = ctrls[i].style;
+        item->dwExtendedStyle = ctrls[i].exStyle;
+        item->x = ctrls[i].x;
+        item->y = ctrls[i].y;
+        item->cx = ctrls[i].cx;
+        item->cy = ctrls[i].cy;
+        item->id = ctrls[i].id;
+        offset += sizeof(DLGITEMTEMPLATE);
+
+        // Class: 0xFFFF followed by atom WORD
+        *(WORD*)(buf + offset) = 0xFFFF; offset += 2;
+        *(WORD*)(buf + offset) = ctrls[i].classAtom; offset += 2;
+
+        // Text
+        int textLen = (int)wcslen(ctrls[i].text);
+        wcscpy_s((wchar_t*)(buf + offset), textLen + 1, ctrls[i].text);
+        offset += textLen * 2 + 2;
+
+        // cbExtra
+        *(WORD*)(buf + offset) = 0; offset += 2;
+    }
+
+    GlobalUnlock(hMem);
+    return hMem;
+}
+
+// ==========================================
+// 3. 主插件类
 // ==========================================
 class CLatencyPlugin : public ITMPlugin
 {
@@ -265,13 +437,31 @@ public:
         switch (index)
         {
         case TMI_NAME: return L"代理节点延迟监控";
-        case TMI_DESCRIPTION: return L"多站点测速 (中位数)，支持自定义测速 URL，颜色显示";
+        case TMI_DESCRIPTION: return L"多站点测速，支持自定义测速 URL，颜色显示，可调字体和间隔";
         case TMI_AUTHOR: return L"YourName";
         case TMI_COPYRIGHT: return L"Copyright (C) 2026";
         case TMI_VERSION: return L"1.0.3";
         case TMI_URL: return L"";
         default: return L"";
         }
+    }
+    virtual OptionReturn ShowOptionsDialog(void* hParent) override {
+        HWND hWnd = (HWND)hParent;
+        HGLOBAL hTemplate = CreateSettingsTemplate();
+        if (!hTemplate) return OR_OPTION_UNCHANGED;
+
+        INT_PTR ret = DialogBoxIndirectParamW(
+            GetModuleHandleW(NULL),
+            (LPDLGTEMPLATE)GlobalLock(hTemplate),
+            hWnd,
+            SettingsDlgProc,
+            (LPARAM)&m_latency_item
+        );
+
+        GlobalUnlock(hTemplate);
+        GlobalFree(hTemplate);
+
+        return (ret == IDOK) ? OR_OPTION_CHANGED : OR_OPTION_UNCHANGED;
     }
     // 接收主程序传递的颜色信息
     virtual void OnExtenedInfo(ExtendedInfoIndex index, const wchar_t* data) override {
@@ -283,7 +473,7 @@ public:
 };
 
 // ==========================================
-// 3. 导出插件实例 (官方要求的规范签名)
+// 4. 导出插件实例 (官方要求的规范签名)
 // ==========================================
 extern "C" __declspec(dllexport) ITMPlugin* TMPluginGetInstance()
 {
