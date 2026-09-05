@@ -23,6 +23,8 @@
 // 引入 Windows 自带的网络库和时间库
 #include <wininet.h>
 #pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
 #include <chrono>
 // ==========================================
 
@@ -124,7 +126,7 @@ public:
     virtual const wchar_t* GetItemId() const override { return L"proxy_latency_item_01"; }
     virtual const wchar_t* GetItemLableText() const override { return L"延迟: "; }
     virtual const wchar_t* GetItemValueText() const override { return m_item_value.c_str(); }
-    virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms (6/6)"; }
+    virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms"; }
 
     // ==========================================
     // 自定义绘制 — 实现颜色数字
@@ -134,21 +136,53 @@ public:
     // 固定宽度 (96 DPI 下)，主程序会根据 DPI 自动缩放
     virtual int GetItemWidth() const override { return 150; }
 
-    // 自定义绘制
-    virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
-        // 字体大小自适应高度
-        int font_size = (std::max)(10, h - 2);
+    // 实际宽度
+    virtual int GetItemWidthEx(void* hDC) const override {
+        return 150;
+    }
 
-        // 绘制标签 — 使用默认标签颜色
+    // 自定义绘制 — 旧 API（使用 HDC）
+    virtual void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override {
+        HDC dc = (HDC)hDC;
+        int font_size = (std::max)(12, h);
+
+        HFONT hFont = CreateFontW(font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        HFONT hOldFont = (HFONT)SelectObject(dc, hFont);
+        SetBkMode(dc, TRANSPARENT);
+
+        int label_len = (int)wcslen(GetItemLableText());
+        SIZE label_size{};
+        GetTextExtentPoint32W(dc, GetItemLableText(), label_len, &label_size);
+
+        // 绘制标签
+        SetTextColor(dc, m_label_color);
+        RECT label_rc = { x, y, x + w, y + h };
+        DrawTextW(dc, GetItemLableText(), -1, &label_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // 绘制数值（使用延迟颜色）
+        SetTextColor(dc, m_latency_color);
+        RECT value_rc = { x + label_size.cx, y, x + w, y + h };
+        DrawTextW(dc, m_item_value.c_str(), -1, &value_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(dc, hOldFont);
+        DeleteObject(hFont);
+    }
+
+    // 自定义绘制 — 新 API（使用 IPluginDrawer）
+    virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
+        int font_size = (std::max)(12, h);
+        const wchar_t* font_name = L"Segoe UI";
+
         const wchar_t* label = GetItemLableText();
         int label_w = 0, label_h = 0;
-        pDrawer->GetTextExtent(label, NULL, font_size, false, false, &label_w, &label_h);
-        pDrawer->DrawText(x, y, label_w, h, label, NULL, font_size, false, false, m_label_color, 0);
+        pDrawer->GetTextExtent(label, font_name, font_size, false, false, &label_w, &label_h);
+        pDrawer->DrawText(x, y, label_w, h, label, font_name, font_size, false, false, m_label_color, 0);
 
-        // 绘制数值 — 使用延迟颜色
         int value_x = x + label_w;
         int value_w = w - label_w;
-        pDrawer->DrawText(value_x, y, value_w, h, m_item_value.c_str(), NULL, font_size, false, false, m_latency_color, 0);
+        pDrawer->DrawText(value_x, y, value_w, h, m_item_value.c_str(), font_name, font_size, false, false, m_latency_color, 0);
 
         return true;
     }
@@ -179,9 +213,7 @@ public:
                     long long median = latencies[latencies.size() / 2];
                     m_last_latency = median;
                     m_latency_color = GetLatencyColor(median);
-                    m_item_value = std::to_wstring(median) + L" ms ("
-                                 + std::to_wstring(static_cast<int>(latencies.size())) + L"/"
-                                 + std::to_wstring(total) + L")";
+                    m_item_value = std::to_wstring(median) + L" ms";
                 } else {
                     m_last_latency = -1;
                     m_latency_color = GetLatencyColor(-1);
