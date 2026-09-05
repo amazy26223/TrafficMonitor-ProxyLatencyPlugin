@@ -54,6 +54,8 @@ private:
     unsigned int m_label_color = 0xCCCCCC;   // 标签颜色（从主程序获取）
     unsigned int m_latency_color = 0x00CC00;  // 延迟数值颜色（自动计算）
     long long m_last_latency = -1;            // 上次测到的延迟，-1 表示未测到
+    std::chrono::steady_clock::time_point m_last_measure_time; // 上次测速时间
+    const int m_measure_interval_ms = 5000;   // 测速间隔（毫秒）
 
     // 从配置文件加载测速 URL
     void LoadUrls() {
@@ -144,7 +146,7 @@ public:
     // 自定义绘制 — 旧 API（使用 HDC）
     virtual void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override {
         HDC dc = (HDC)hDC;
-        int font_size = (std::max)(12, h);
+        int font_size = (std::max)(12, h - 2);
 
         HFONT hFont = CreateFontW(font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -172,7 +174,7 @@ public:
 
     // 自定义绘制 — 新 API（使用 IPluginDrawer）
     virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
-        int font_size = (std::max)(12, h);
+        int font_size = (std::max)(12, h - 2);
         const wchar_t* font_name = L"Segoe UI";
 
         const wchar_t* label = GetItemLableText();
@@ -192,6 +194,13 @@ public:
 
     // 多站点测速逻辑 — 取中位数，避免直连站点拉低结果
     void UpdateLatencyAsync() {
+        // 5 秒间隔限制
+        auto now = std::chrono::steady_clock::now();
+        if (now - m_last_measure_time < std::chrono::milliseconds(m_measure_interval_ms)) {
+            return;
+        }
+        m_last_measure_time = now;
+
         if (m_is_updating.exchange(true)) return;
 
         std::thread([this]() {
