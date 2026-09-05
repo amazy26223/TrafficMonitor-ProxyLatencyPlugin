@@ -55,7 +55,7 @@ private:
     unsigned int m_latency_color = 0x00CC00;  // 延迟数值颜色（自动计算）
     long long m_last_latency = -1;            // 上次测到的延迟，-1 表示未测到
     std::chrono::steady_clock::time_point m_last_measure_time; // 上次测速时间
-    const int m_measure_interval_ms = 5000;   // 测速间隔（毫秒）
+    const int m_measure_interval_ms = 3000;   // 测速间隔（毫秒）
 
     // 从配置文件加载测速 URL
     void LoadUrls() {
@@ -146,35 +146,43 @@ public:
     // 自定义绘制 — 旧 API（使用 HDC）
     virtual void DrawItem(void* hDC, int x, int y, int w, int h, bool dark_mode) override {
         HDC dc = (HDC)hDC;
-        int font_size = (std::max)(12, h - 2);
+        int font_size = (std::max)(14, h - 1);
 
+        // 正常字体（标签）
         HFONT hFont = CreateFontW(font_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-        HFONT hOldFont = (HFONT)SelectObject(dc, hFont);
+        // 粗体字体（数值）
+        HFONT hBoldFont = CreateFontW(font_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         SetBkMode(dc, TRANSPARENT);
 
         int label_len = (int)wcslen(GetItemLableText());
         SIZE label_size{};
+        SelectObject(dc, hFont);
         GetTextExtentPoint32W(dc, GetItemLableText(), label_len, &label_size);
 
-        // 绘制标签
+        // 绘制标签（正常）
         SetTextColor(dc, m_label_color);
+        SelectObject(dc, hFont);
         RECT label_rc = { x, y, x + w, y + h };
         DrawTextW(dc, GetItemLableText(), -1, &label_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // 绘制数值（使用延迟颜色）
+        // 绘制数值（粗体 + 延迟颜色）
         SetTextColor(dc, m_latency_color);
+        SelectObject(dc, hBoldFont);
         RECT value_rc = { x + label_size.cx, y, x + w, y + h };
         DrawTextW(dc, m_item_value.c_str(), -1, &value_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        SelectObject(dc, hOldFont);
+        SelectObject(dc, hFont);
         DeleteObject(hFont);
+        DeleteObject(hBoldFont);
     }
 
     // 自定义绘制 — 新 API（使用 IPluginDrawer）
     virtual bool DrawItemEx(IPluginDrawer* pDrawer, int x, int y, int w, int h, bool dark_mode) override {
-        int font_size = (std::max)(12, h - 2);
+        int font_size = (std::max)(14, h - 1);
         const wchar_t* font_name = L"Segoe UI";
 
         const wchar_t* label = GetItemLableText();
@@ -184,7 +192,7 @@ public:
 
         int value_x = x + label_w;
         int value_w = w - label_w;
-        pDrawer->DrawText(value_x, y, value_w, h, m_item_value.c_str(), font_name, font_size, false, false, m_latency_color, 0);
+        pDrawer->DrawText(value_x, y, value_w, h, m_item_value.c_str(), font_name, font_size, true, false, m_latency_color, 0);
 
         return true;
     }
