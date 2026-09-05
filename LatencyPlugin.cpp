@@ -126,7 +126,7 @@ public:
 
     virtual const wchar_t* GetItemName() const override { return m_item_name.c_str(); }
     virtual const wchar_t* GetItemId() const override { return L"proxy_latency_item_01"; }
-    virtual const wchar_t* GetItemLableText() const override { return L"延迟: "; }
+    virtual const wchar_t* GetItemLableText() const override { return L""; }
     virtual const wchar_t* GetItemValueText() const override { return m_item_value.c_str(); }
     virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms"; }
 
@@ -136,11 +136,11 @@ public:
     virtual bool IsCustomDraw() const override { return true; }
 
     // 固定宽度 (96 DPI 下)，主程序会根据 DPI 自动缩放
-    virtual int GetItemWidth() const override { return 90; }
+    virtual int GetItemWidth() const override { return 65; }
 
     // 实际宽度
     virtual int GetItemWidthEx(void* hDC) const override {
-        return 90;
+        return 65;
     }
 
     // 自定义绘制 — 旧 API（使用 HDC）
