@@ -136,11 +136,11 @@ public:
     virtual bool IsCustomDraw() const override { return true; }
 
     // 固定宽度 (96 DPI 下)，主程序会根据 DPI 自动缩放
-    virtual int GetItemWidth() const override { return 150; }
+    virtual int GetItemWidth() const override { return 90; }
 
     // 实际宽度
     virtual int GetItemWidthEx(void* hDC) const override {
-        return 150;
+        return 90;
     }
 
     // 自定义绘制 — 旧 API（使用 HDC）
