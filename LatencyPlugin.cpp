@@ -14,30 +14,28 @@
 // ==========================================
 #include "PluginInterface.h"
 #include <string>
+#include <vector>
 #include <thread>
 #include <atomic>
+#include <algorithm>
 #include <limits>
 // ==========================================
-// 新增：引入 Windows 自带的网络库和时间库
+// 引入 Windows 自带的网络库和时间库
 #include <wininet.h>
-#pragma comment(lib, "wininet.lib") // 告诉编译器自动链接网络库
+#pragma comment(lib, "wininet.lib")
 #include <chrono>
 // ==========================================
 
 // ==========================================
-// 测速站点列表
-// 全部使用轻量级 204/成功页面端点，仅需建立连接即可完成测速
-// 多站点取最小值，有效规避单点波动或故障导致的误判，大幅提高准确性
+// 配置文件：proxy_latency_urls.txt
+// 放在 DLL 同级目录下，每行一个测速 URL
+// 如果文件不存在，使用下方默认 URL
+// 提示：请使用走代理节点而非直连的站点，否则测到的是本地延迟
 // ==========================================
-static const wchar_t* TEST_URLS[] = {
-    L"http://cp.cloudflare.com/generate_204",             // Cloudflare 全球 CDN 测速节点
-    L"http://www.gstatic.com/generate_204",               // Google 静态资源测速节点
-    L"http://connectivitycheck.gstatic.com/generate_204", // Google 连接检查节点
-    L"http://detectportal.firefox.com/success.txt",       // Firefox 连通性检测
-    L"http://captive.apple.com/generate_204",             // Apple 网络连通性检查
-    L"http://connectivitycheck.platform.hicloud.com/generate_204", // 华为连通性检查
+static const wchar_t* DEFAULT_URLS[] = {
+    L"http://cp.cloudflare.com/generate_204",
 };
-static const int TEST_URL_COUNT = sizeof(TEST_URLS) / sizeof(TEST_URLS[0]);
+static const int DEFAULT_URL_COUNT = sizeof(DEFAULT_URLS) / sizeof(DEFAULT_URLS[0]);
 
 // ==========================================
 // 1. 数据显示项类 (负责在任务栏上显示数据)
@@ -48,6 +46,47 @@ private:
     std::wstring m_item_name = L"代理延迟";
     std::wstring m_item_value = L"检测中...";
     std::atomic<bool> m_is_updating{ false };
+    std::vector<std::wstring> m_urls;
+
+    // 从配置文件加载测速 URL
+    void LoadUrls() {
+        m_urls.clear();
+
+        // 获取 DLL 所在目录
+        wchar_t dllPath[MAX_PATH];
+        GetModuleFileName(NULL, dllPath, MAX_PATH);
+        std::wstring configPath = dllPath;
+        auto pos = configPath.rfind(L'\\');
+        if (pos != std::wstring::npos) {
+            configPath = configPath.substr(0, pos + 1);
+        }
+        configPath += L"proxy_latency_urls.txt";
+
+        // 尝试读取配置文件
+        FILE* file = NULL;
+        if (_wfopen_s(&file, configPath.c_str(), L"r,ccs=UTF-8") == 0 && file) {
+            wchar_t line[1024];
+            while (fgetws(line, 1024, file)) {
+                // 去除末尾换行符
+                size_t len = wcslen(line);
+                while (len > 0 && (line[len - 1] == L'\n' || line[len - 1] == L'\r')) {
+                    line[--len] = L'\0';
+                }
+                // 跳过空行和注释行
+                if (len > 0 && line[0] != L'#') {
+                    m_urls.push_back(line);
+                }
+            }
+            fclose(file);
+        }
+
+        // 如果配置文件不存在或为空，使用默认 URL
+        if (m_urls.empty()) {
+            for (int i = 0; i < DEFAULT_URL_COUNT; i++) {
+                m_urls.push_back(DEFAULT_URLS[i]);
+            }
+        }
+    }
 
     // 测量到单个站点的延迟 (毫秒)，失败返回 -1
     long long MeasureLatency(HINTERNET hInternet, const wchar_t* url) {
@@ -62,37 +101,40 @@ private:
     }
 
 public:
+    CLatencyItem() {
+        LoadUrls();
+    }
+
     virtual const wchar_t* GetItemName() const override { return m_item_name.c_str(); }
     virtual const wchar_t* GetItemId() const override { return L"proxy_latency_item_01"; }
     virtual const wchar_t* GetItemLableText() const override { return L"延迟: "; }
     virtual const wchar_t* GetItemValueText() const override { return m_item_value.c_str(); }
     virtual const wchar_t* GetItemValueSampleText() const override { return L"999 ms"; }
 
-    // 多站点并发测速逻辑
+    // 多站点测速逻辑 — 取中位数，避免直连站点拉低结果
     void UpdateLatencyAsync() {
-        if (m_is_updating.exchange(true)) return; // 如果上一轮测速还没结束，就跳过
+        if (m_is_updating.exchange(true)) return;
 
         std::thread([this]() {
             HINTERNET hInternet = InternetOpen(L"TM_Plugin", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
             if (hInternet) {
-                long long min_latency = std::numeric_limits<long long>::max();
-                int success_count = 0;
+                std::vector<long long> latencies;
+                int total = static_cast<int>(m_urls.size());
 
-                for (int i = 0; i < TEST_URL_COUNT; i++) {
-                    long long delay = MeasureLatency(hInternet, TEST_URLS[i]);
+                for (int i = 0; i < total; i++) {
+                    long long delay = MeasureLatency(hInternet, m_urls[i].c_str());
                     if (delay >= 0) {
-                        success_count++;
-                        if (delay < min_latency) {
-                            min_latency = delay;
-                        }
+                        latencies.push_back(delay);
                     }
                 }
 
-                if (success_count > 0) {
-                    // 显示最小值 + 成功站点数，例如 "50 ms (4/6)"
-                    m_item_value = std::to_wstring(min_latency) + L" ms (" 
-                                 + std::to_wstring(success_count) + L"/" 
-                                 + std::to_wstring(TEST_URL_COUNT) + L")";
+                if (!latencies.empty()) {
+                    // 取中位数 (median) 而非最小值，避免直连站点的干扰
+                    std::sort(latencies.begin(), latencies.end());
+                    long long median = latencies[latencies.size() / 2];
+                    m_item_value = std::to_wstring(median) + L" ms ("
+                                 + std::to_wstring(static_cast<int>(latencies.size())) + L"/"
+                                 + std::to_wstring(total) + L")";
                 } else {
                     m_item_value = L"超时";
                 }
@@ -100,7 +142,7 @@ public:
             } else {
                 m_item_value = L"网络错误";
             }
-            m_is_updating = false; // 测速完成，允许下一次测速
+            m_is_updating = false;
         }).detach();
     }
 };
@@ -124,10 +166,10 @@ public:
         switch (index)
         {
         case TMI_NAME: return L"代理节点延迟监控";
-        case TMI_DESCRIPTION: return L"多站点并发测速，显示当前代理节点的最小延迟";
+        case TMI_DESCRIPTION: return L"多站点测速 (中位数)，支持自定义测速 URL";
         case TMI_AUTHOR: return L"YourName";
         case TMI_COPYRIGHT: return L"Copyright (C) 2026";
-        case TMI_VERSION: return L"1.1";
+        case TMI_VERSION: return L"0.2.0";
         case TMI_URL: return L"";
         default: return L"";
         }
