@@ -113,8 +113,8 @@ private:
     unsigned int GetLatencyColor(long long latency) const {
         if (latency < 0) return 0x888888;       // 超时/错误 → 灰色
         if (latency >= 5000) return 0x3333DD;   // 5000ms+ → 红色
-        // 0~5000ms: 绿色渐变，从亮绿(0x00FF00)到暗绿(0x003300)
-        int g = 255 - static_cast<int>(latency * 204 / 5000);
+        // 0~5000ms: 绿色渐变，从 0x00B400 到 0x003200
+        int g = 180 - static_cast<int>(latency * 130 / 5000);
         return static_cast<unsigned int>(g << 8);
     }
 
