@@ -109,14 +109,13 @@ private:
         return -1;
     }
 
-    // 根据延迟值返回颜色 (COLORREF: 0x00BBGGRR)
+    // 根据延迟值返回颜色 (0x00BBGGRR)
     unsigned int GetLatencyColor(long long latency) const {
-        if (latency < 0) return 0x888888;    // 错误/超时 → 灰色
-        if (latency < 50) return 0x00CC00;   // 优秀 → 绿色
-        if (latency < 100) return 0x66CC00;  // 良好 → 浅绿
-        if (latency < 200) return 0xDDCC00;  // 一般 → 黄色
-        if (latency < 500) return 0xDD6600;  // 较慢 → 橙色
-        return 0xDD3333;                      // 很慢 → 红色
+        if (latency < 0) return 0x888888;       // 超时/错误 → 灰色
+        if (latency >= 5000) return 0x3333DD;   // 5000ms+ → 红色
+        // 0~5000ms: 绿色渐变，从亮绿(0x00FF00)到暗绿(0x003300)
+        int g = 255 - static_cast<int>(latency * 204 / 5000);
+        return static_cast<unsigned int>(g << 8);
     }
 
 public:
