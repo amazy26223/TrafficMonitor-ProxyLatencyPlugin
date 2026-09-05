@@ -1,0 +1,8 @@
+# Build artifacts
+*.obj
+*.lib
+*.exp
+*.dll
+# Keep releases folder but not tracked individually
+/releases/*
+# Build scripts are local convenience, keep in repo

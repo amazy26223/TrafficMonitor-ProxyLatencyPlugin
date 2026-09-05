@@ -1,4 +1,10 @@
 #include "pch.h" 
+// ==========================================
+// 必须放在 Windows.h 之前，确保 Unicode 版本 API 和 NOMINMAX
+#define UNICODE
+#define _UNICODE
+#define NOMINMAX
+// ==========================================
 #include <Windows.h>
 // ==========================================
 // 极其关键的修复：解决 VS 默认精简模式导致的 interface 宏丢失问题

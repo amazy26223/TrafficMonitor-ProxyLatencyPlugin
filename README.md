@@ -31,16 +31,33 @@
 3. 完全退出并重新启动 TrafficMonitor。
 4. 在主界面或任务栏右键菜单中，进入"选项"或"显示设置"，勾选启用该插件即可。
 
+## 下载编译好的 DLL
+
+在 [Releases](https://github.com/amazy26223/TrafficMonitor-ProxyLatencyPlugin/releases) 页面下载最新版本：
+
+- `TrafficMonitorProxyPlugin_x64.dll` — 64 位系统
+- `TrafficMonitorProxyPlugin_x86.dll` — 32 位系统
+
 ## 编译说明
 
-使用 Visual Studio 创建空 C++ 项目：
+项目目录中提供了编译脚本，或使用 Visual Studio 手动编译：
 
 1. 新建一个 **DLL** 类型的项目
 2. 将 `LatencyPlugin.cpp` 和 `PluginInterface.h` 添加到项目
 3. 项目属性中确保：
    - 字符集设置为 **使用 Unicode 字符集**
-   - C++ 语言标准 ≥ C++11
+   - 在 `C/C++` → `预处理器` 中添加 `NOMINMAX`、`UNICODE`、`_UNICODE`
+   - C++ 语言标准 ≥ C++17
 4. 编译生成 DLL
+
+也可直接使用项目中的编译脚本：
+```powershell
+# 编译 x64 版本
+.\compile.ps1
+
+# 编译 x86 版本
+.\compile_x86.ps1
+```
 
 ## 版本历史
 
